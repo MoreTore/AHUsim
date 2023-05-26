@@ -9,11 +9,18 @@ from datetime import datetime, timedelta
 from meteostat import Stations, Hourly, Point
 from scipy.optimize import curve_fit
 
-stations = Stations()
+from keras.models import load_model
+from sklearn.preprocessing import MinMaxScaler
+# Load your trained model
+model = load_model('my_model.h5')
+# Normalization
+scaler = MinMaxScaler()
 
+# real weather data
+stations = Stations()
 location = Point(49.933, -97.0703, 70)
 start = datetime(2018, 1, 1)
-end = datetime(2018, 12, 30)
+end = datetime(2021, 12, 30)
 start_simulation = start
 end_simulation = end
 # Get daily weather data for a specific time range
@@ -66,7 +73,7 @@ temp_amplitude_moving_avg = temp_amplitude
 new_values = np.empty((N+1, len(df.columns)), dtype=np.float64)
 
 # Simplified model of discharge air temperature and cooling valve position:
-for i in range(0, N):
+for i in range(1, N):
 
     if i % 100 == 0 or i == N:
         print_progress_bar(i, N+1, prefix = f'Simulating {N} minutes from: {start} to: {end}', suffix = 'Complete', length = 40)
@@ -117,9 +124,29 @@ for i in range(0, N):
     new_values[i, :] = [oat, rat, mad_pos, c_pos, h_pos, dat, econ_state]
     previous_error = error
 
+    # Reshape the data to match the model input shape
+    current_data = new_values[i, :].reshape(1, -1)
+
+    # Normalize the current data
+    current_data_normalized = scaler.transform(current_data)
+
+    # Predict using the model
+    model_output = model.predict(current_data_normalized)
+
+    # Calculate the MSE
+    mse = np.mean(np.power(current_data_normalized - model_output, 2))
+
+    # Determine a suitable threshold
+    threshold = np.quantile(mse, 0.99)
+    
+    # If the MSE is higher than the threshold, it's an anomaly
+    if mse > threshold:
+        print(f"Anomaly detected at time {i}")
+
+
 # Single save to dataframe
 df.loc[start_simulation + timedelta(minutes=1):end] = new_values[1:]
-    
+df.to_pickle('prepared_data.pkl')    
 
 fig, axs = plt.subplots(2, 1, figsize=(12, 8))  # Create two subplots: 2 rows, 1 column
 
